@@ -188,6 +188,31 @@ fn draw_trails(trails: Query<&Trail>, mut gizmos: Gizmos) {
     }
 }
 
+fn setup_ui(mut commands: Commands) {
+    commands.spawn((
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(20.0),
+            right: px(20.0),
+            ..default()
+        },
+        Text::new("Some text"),
+        TextColor(Color::WHITE),
+        TextLayout::justify(Justify::Left),
+    ));
+}
+
+fn update_ui(planets: Query<(&Transform, &Name), With<Planet>>, mut ui_text: Query<&mut Text>) {
+    for (transform, name) in planets {
+        if name.as_str() == "Earth" {
+            let mut text = ui_text.single_mut().expect("More than one UI element");
+            text.0 = transform.translation.distance(Vec3::ZERO).to_string();
+        } else {
+            continue;
+        }
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -196,7 +221,8 @@ fn main() {
             TRAIL_INTERVAL,
             TimerMode::Repeating,
         )))
-        .add_systems(Startup, (setup_camera, setup_planets))
+        .add_systems(Startup, (setup_camera, setup_planets, setup_ui))
+        .add_systems(Update, update_ui)
         .add_systems(
             Update,
             (update_velocity, update_position, update_trails, draw_trails).chain(),
