@@ -10,25 +10,31 @@ struct Star;
 struct Mass(f32);
 
 #[derive(Component)]
+struct PlanetUI(Entity);
+
+#[derive(Component)]
 struct Trail {
     points: Vec<Vec2>,
     max_points: usize,
-    mesh: Option<Handle<Mesh>>,
 }
 
 #[derive(Resource, Deref, DerefMut)]
 struct TrailTimer(Timer);
+
+#[derive(Resource, Default)]
+struct PlanetIDs(Vec<(&'static str, Entity)>);
 
 #[derive(Component)]
 struct Velocity(Vec2);
 
 const SIZE_SCALE: f32 = 10.0;
 const DIST_SCALE: f32 = 300.0;
-const TIME_SCALE: f32 = 5.0;
+const TIME_SCALE: f32 = 1.0;
 const SQRT_GM: f32 = 0.5138;
 const G: f32 = 8e-7;
-const TRAIL_MAX_LENGTH: usize = 100;
-const TRAIL_INTERVAL: f32 = 0.5;
+const TRAIL_MAX_LENGTH: usize = 50;
+const TRAIL_INTERVAL: f32 = 0.1;
+const SOLAR_MASS: f32 = 330000.0;
 
 struct PlanetStats {
     name: &'static str,
@@ -98,30 +104,35 @@ fn setup_planets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut colors: ResMut<Assets<ColorMaterial>>,
+    mut planet_ids: ResMut<PlanetIDs>,
 ) {
     for planet in PLANETS {
-        commands.spawn((
-            Planet,
-            Name::from(planet.name),
-            Mass(planet.mass),
-            Mesh2d(meshes.add(Circle::new((1.0 + planet.size.log10()) * SIZE_SCALE))),
-            MeshMaterial2d(colors.add(Color::from(WHITE))),
-            Transform::from_xyz(planet.initial_radius * DIST_SCALE, 0.0, 0.0),
-            Velocity(Vec2::new(
-                0.0,
-                (SQRT_GM / planet.initial_radius.sqrt()) * DIST_SCALE / TIME_SCALE,
-            )),
-            Trail {
-                points: Vec::new(),
-                max_points: TRAIL_MAX_LENGTH,
-                mesh: None,
-            },
-        ));
+        let planet_id = commands
+            .spawn((
+                Planet,
+                Name::from(planet.name),
+                Mass(planet.mass),
+                Mesh2d(meshes.add(Circle::new((1.0 + planet.size.log10()) * SIZE_SCALE))),
+                MeshMaterial2d(colors.add(Color::from(WHITE))),
+                Transform::from_xyz(planet.initial_radius * DIST_SCALE, 0.0, 0.0),
+                Velocity(Vec2::new(
+                    0.0,
+                    (SQRT_GM / planet.initial_radius.sqrt()) * DIST_SCALE / TIME_SCALE,
+                )),
+                Trail {
+                    points: Vec::new(),
+                    max_points: (TRAIL_MAX_LENGTH as f32 * planet.initial_radius) as usize,
+                },
+            ))
+            .id();
+
+        planet_ids.0.push((planet.name, planet_id));
+
         println!("{} size is {}", planet.name, 1.0 + planet.size.log10())
     }
     commands.spawn((
         Star,
-        Mass(330000.0),
+        Mass(SOLAR_MASS),
         // Mesh2d(meshes.add(Circle::new(planet.size * SIZE_SCALE))),
         Mesh2d(meshes.add(Circle::new(25.0))),
         MeshMaterial2d(colors.add(Color::from(YELLOW))),
@@ -188,28 +199,42 @@ fn draw_trails(trails: Query<&Trail>, mut gizmos: Gizmos) {
     }
 }
 
-fn setup_ui(mut commands: Commands) {
-    commands.spawn((
-        Node {
+fn setup_ui(mut commands: Commands, planet_ids: Res<PlanetIDs>) {
+    commands
+        .spawn((Node {
             position_type: PositionType::Absolute,
-            top: px(20.0),
-            right: px(20.0),
+            top: px(20),
+            right: px(20),
+            row_gap: px(4),
+            flex_direction: FlexDirection::Column,
             ..default()
-        },
-        Text::new("Some text"),
-        TextColor(Color::WHITE),
-        TextLayout::justify(Justify::Left),
-    ));
+        },))
+        .with_children(|parent| {
+            for (name, entity) in &planet_ids.0 {
+                parent.spawn((
+                    Text::new(*name),
+                    TextColor(Color::WHITE),
+                    TextLayout::justify(Justify::Left),
+                    PlanetUI(*entity),
+                ));
+            }
+        });
 }
 
-fn update_ui(planets: Query<(&Transform, &Name), With<Planet>>, mut ui_text: Query<&mut Text>) {
-    for (transform, name) in planets {
-        if name.as_str() == "Earth" {
-            let mut text = ui_text.single_mut().expect("More than one UI element");
-            text.0 = transform.translation.distance(Vec3::ZERO).to_string();
-        } else {
+fn update_ui(
+    planets: Query<(&Transform, &Name), With<Planet>>,
+    ui_text: Query<(&mut Text, &PlanetUI)>,
+) {
+    for (mut text, planet_id) in ui_text {
+        let Ok((transform, name)) = planets.get(planet_id.0) else {
             continue;
-        }
+        };
+
+        text.0 = format!(
+            "{} orbit radius: {:.2} AU",
+            name,
+            transform.translation.length() / DIST_SCALE
+        )
     }
 }
 
@@ -221,7 +246,8 @@ fn main() {
             TRAIL_INTERVAL,
             TimerMode::Repeating,
         )))
-        .add_systems(Startup, (setup_camera, setup_planets, setup_ui))
+        .init_resource::<PlanetIDs>()
+        .add_systems(Startup, (setup_camera, (setup_planets, setup_ui).chain()))
         .add_systems(Update, update_ui)
         .add_systems(
             Update,
