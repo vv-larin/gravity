@@ -1,6 +1,9 @@
 use std::collections::VecDeque;
 
-use bevy::{color::palettes::basic::*, post_process::bloom::Bloom, prelude::*};
+use bevy::{
+    color::palettes::basic::*, input::mouse::AccumulatedMouseScroll, post_process::bloom::Bloom,
+    prelude::*,
+};
 
 #[derive(Component)]
 struct Planet;
@@ -137,7 +140,7 @@ fn setup_planets(
     commands.spawn((
         Star,
         Mass(SOLAR_MASS),
-        Mesh2d(meshes.add(Circle::new(5.0 * SIZE_SCALE))),
+        Mesh2d(meshes.add(Circle::new(0.00465 * DIST_SCALE))),
         MeshMaterial2d(colors.add(Color::srgb(10., 7., 1.))),
         Transform::default(),
     ));
@@ -273,19 +276,28 @@ fn move_player(
 }
 
 fn update_camera(
-    mut camera: Single<&mut Transform, (With<Camera2d>, Without<Player>)>,
+    camera: Single<(&mut Transform, &mut Projection), (With<Camera2d>, Without<Player>)>,
     player: Single<&Transform, (With<Player>, Without<Camera2d>)>,
     time: Res<Time>,
+    scroll: Res<AccumulatedMouseScroll>,
 ) {
+    let (mut camera_transform, mut projection) = camera.into_inner();
+
+    let Projection::Orthographic(camera_projection) = &mut *projection else {
+        return;
+    };
+
     let direction = Vec3::new(
         player.translation.x,
         player.translation.y,
-        camera.translation.z,
+        camera_transform.translation.z,
     );
 
-    camera
+    camera_transform
         .translation
         .smooth_nudge(&direction, CAMERA_DECAY_RATE, time.delta_secs());
+
+    camera_projection.scale *= 0.9f32.powf(scroll.delta.y);
 }
 
 fn main() {
