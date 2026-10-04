@@ -1,12 +1,15 @@
 use std::collections::VecDeque;
 
-use bevy::{color::palettes::basic::*, prelude::*};
+use bevy::{color::palettes::basic::*, post_process::bloom::Bloom, prelude::*};
 
 #[derive(Component)]
 struct Planet;
 
 #[derive(Component)]
 struct Star;
+
+#[derive(Component)]
+struct Player;
 
 #[derive(Component)]
 struct Mass(f32);
@@ -29,13 +32,15 @@ struct Position(Vec2);
 #[derive(Component)]
 struct Velocity(Vec2);
 
-const SIZE_SCALE: f32 = 10.0;
-const DIST_SCALE: f32 = 300.0;
+const SIZE_SCALE: f32 = 2.0;
+const DIST_SCALE: f32 = 100.0;
 const TIME_SCALE: f32 = 1.0;
 const G: f32 = 8e-7;
 const TRAIL_MAX_LENGTH: usize = 50;
 const TRAIL_INTERVAL: f32 = 0.1;
 const SOLAR_MASS: f32 = 330000.0;
+const PLAYER_SPEED: f32 = 200.0;
+const CAMERA_DECAY_RATE: f32 = 2.2;
 
 struct PlanetStats {
     name: &'static str,
@@ -44,7 +49,7 @@ struct PlanetStats {
     initial_radius: f32,
 }
 
-const PLANETS: [PlanetStats; 4] = [
+const PLANETS: [PlanetStats; 9] = [
     PlanetStats {
         name: "Mercury",
         mass: 0.055,
@@ -69,36 +74,36 @@ const PLANETS: [PlanetStats; 4] = [
         size: 0.53,
         initial_radius: 1.52,
     },
-    // PlanetStats {
-    //     name: "Jupiter",
-    //     mass: 317.8,
-    //     size: 11.21,
-    //     initial_radius: 5.2,
-    // },
-    // PlanetStats {
-    //     name: "Saturn",
-    //     mass: 95.2,
-    //     size: 9.45,
-    //     initial_radius: 9.58,
-    // },
-    // PlanetStats {
-    //     name: "Uranus",
-    //     mass: 14.5,
-    //     size: 4.01,
-    //     initial_radius: 19.22,
-    // },
-    // PlanetStats {
-    //     name: "Neptune",
-    //     mass: 17.1,
-    //     size: 3.88,
-    //     initial_radius: 30.05,
-    // },
-    // PlanetStats {
-    //     name: "Pluto",
-    //     mass: 0.002,
-    //     size: 0.18,
-    //     initial_radius: 38.48,
-    // },
+    PlanetStats {
+        name: "Jupiter",
+        mass: 317.8,
+        size: 11.21,
+        initial_radius: 5.2,
+    },
+    PlanetStats {
+        name: "Saturn",
+        mass: 95.2,
+        size: 9.45,
+        initial_radius: 9.58,
+    },
+    PlanetStats {
+        name: "Uranus",
+        mass: 14.5,
+        size: 4.01,
+        initial_radius: 19.22,
+    },
+    PlanetStats {
+        name: "Neptune",
+        mass: 17.1,
+        size: 3.88,
+        initial_radius: 30.05,
+    },
+    PlanetStats {
+        name: "Pluto",
+        mass: 0.002,
+        size: 0.18,
+        initial_radius: 38.48,
+    },
 ];
 
 fn setup_planets(
@@ -132,15 +137,16 @@ fn setup_planets(
     commands.spawn((
         Star,
         Mass(SOLAR_MASS),
-        // Mesh2d(meshes.add(Circle::new(planet.size * SIZE_SCALE))),
-        Mesh2d(meshes.add(Circle::new(25.0))),
-        MeshMaterial2d(colors.add(Color::from(YELLOW))),
+        Mesh2d(meshes.add(Circle::new(5.0 * SIZE_SCALE))),
+        MeshMaterial2d(colors.add(Color::srgb(10., 7., 1.))),
         Transform::default(),
     ));
+
+    commands.spawn((Player, Transform::default()));
 }
 
 fn setup_camera(mut commands: Commands) {
-    commands.spawn(Camera2d);
+    commands.spawn((Camera2d, Bloom::NATURAL));
 }
 
 fn update_position(planets: Query<(&Velocity, &mut Position), With<Planet>>, time: Res<Time>) {
@@ -199,7 +205,7 @@ fn update_trails(
 fn draw_trails(trails: Query<&Trail>, mut gizmos: Gizmos) {
     for trail in trails {
         for point in &trail.points {
-            gizmos.circle_2d(Isometry2d::from_translation(*point), 2.0, WHITE);
+            gizmos.circle_2d(Isometry2d::from_translation(*point), 1.0, WHITE);
         }
     }
 }
@@ -239,6 +245,49 @@ fn update_ui(
     }
 }
 
+fn move_player(
+    mut player: Single<&mut Transform, With<Player>>,
+    time: Res<Time>,
+    input: Res<ButtonInput<KeyCode>>,
+) {
+    let mut direction = Vec2::ZERO;
+
+    if input.pressed(KeyCode::KeyS) {
+        direction.y -= 1.0;
+    }
+
+    if input.pressed(KeyCode::KeyW) {
+        direction.y += 1.0;
+    }
+
+    if input.pressed(KeyCode::KeyA) {
+        direction.x -= 1.0;
+    }
+
+    if input.pressed(KeyCode::KeyD) {
+        direction.x += 1.0;
+    }
+
+    player.translation +=
+        (direction.normalize_or_zero() * time.delta_secs() * PLAYER_SPEED).extend(0.0);
+}
+
+fn update_camera(
+    mut camera: Single<&mut Transform, (With<Camera2d>, Without<Player>)>,
+    player: Single<&Transform, (With<Player>, Without<Camera2d>)>,
+    time: Res<Time>,
+) {
+    let direction = Vec3::new(
+        player.translation.x,
+        player.translation.y,
+        camera.translation.z,
+    );
+
+    camera
+        .translation
+        .smooth_nudge(&direction, CAMERA_DECAY_RATE, time.delta_secs());
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -248,8 +297,14 @@ fn main() {
             TimerMode::Repeating,
         )))
         .add_systems(Startup, (setup_camera, (setup_planets, setup_ui).chain()))
-        .add_systems(Update, update_ui)
         .add_systems(FixedUpdate, (update_velocity, update_position).chain())
-        .add_systems(Update, (draw_planets, update_trails, draw_trails).chain())
+        .add_systems(
+            Update,
+            (
+                update_ui,
+                (move_player, update_camera).chain(),
+                (draw_planets, update_trails, draw_trails).chain(),
+            ),
+        )
         .run();
 }
