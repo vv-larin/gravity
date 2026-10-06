@@ -300,6 +300,16 @@ fn update_camera(
     camera_projection.scale *= 0.9f32.powf(scroll.delta.y);
 }
 
+fn pause_game(mut time: ResMut<Time<Virtual>>, input: Res<ButtonInput<KeyCode>>) {
+    if input.just_pressed(KeyCode::Space) {
+        if time.is_paused() {
+            time.unpause();
+        } else {
+            time.pause();
+        }
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
@@ -313,6 +323,7 @@ fn main() {
         .add_systems(
             Update,
             (
+                pause_game,
                 update_ui,
                 (move_player, update_camera).chain(),
                 (draw_planets, update_trails, draw_trails).chain(),
