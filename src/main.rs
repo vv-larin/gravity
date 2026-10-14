@@ -1,7 +1,9 @@
 use std::collections::VecDeque;
 
 use bevy::{
-    color::palettes::basic::*, input::mouse::AccumulatedMouseScroll, post_process::bloom::Bloom,
+    color::palettes::basic::*,
+    input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll},
+    post_process::bloom::Bloom,
     prelude::*,
 };
 
@@ -12,7 +14,7 @@ struct Planet;
 struct Star;
 
 #[derive(Component)]
-struct Player;
+struct CameraTarget;
 
 #[derive(Component)]
 struct Mass(f32);
@@ -42,7 +44,7 @@ const G: f32 = 8e-7;
 const TRAIL_MAX_LENGTH: usize = 50;
 const TRAIL_INTERVAL: f32 = 0.1;
 const SOLAR_MASS: f32 = 330000.0;
-const PLAYER_SPEED: f32 = 200.0;
+const CAMERA_TARGET_SPEED: f32 = 200.0;
 const CAMERA_DECAY_RATE: f32 = 2.2;
 
 struct PlanetStats {
@@ -145,7 +147,7 @@ fn setup_planets(
         Transform::default(),
     ));
 
-    commands.spawn((Player, Transform::default()));
+    commands.spawn((CameraTarget, Transform::default()));
 }
 
 fn setup_camera(mut commands: Commands) {
@@ -205,10 +207,22 @@ fn update_trails(
     }
 }
 
-fn draw_trails(trails: Query<&Trail>, mut gizmos: Gizmos) {
+fn draw_trails(
+    trails: Query<&Trail>,
+    camera: Single<&Projection, With<Camera>>,
+    mut gizmos: Gizmos,
+) {
+    let Projection::Orthographic(camera_projection) = *camera else {
+        return;
+    };
+
     for trail in trails {
         for point in &trail.points {
-            gizmos.circle_2d(Isometry2d::from_translation(*point), 1.0, WHITE);
+            gizmos.circle_2d(
+                Isometry2d::from_translation(*point),
+                1.0 * camera_projection.scale,
+                WHITE,
+            );
         }
     }
 }
@@ -248,9 +262,9 @@ fn update_ui(
     }
 }
 
-fn move_player(
-    mut player: Single<&mut Transform, With<Player>>,
-    time: Res<Time>,
+fn move_camera_target(
+    mut camera_target: Single<&mut Transform, With<CameraTarget>>,
+    time: Res<Time<Real>>,
     input: Res<ButtonInput<KeyCode>>,
 ) {
     let mut direction = Vec2::ZERO;
@@ -271,15 +285,18 @@ fn move_player(
         direction.x += 1.0;
     }
 
-    player.translation +=
-        (direction.normalize_or_zero() * time.delta_secs() * PLAYER_SPEED).extend(0.0);
+    camera_target.translation +=
+        (direction.normalize_or_zero() * time.delta_secs() * CAMERA_TARGET_SPEED).extend(0.0);
 }
 
 fn update_camera(
-    camera: Single<(&mut Transform, &mut Projection), (With<Camera2d>, Without<Player>)>,
-    player: Single<&Transform, (With<Player>, Without<Camera2d>)>,
-    time: Res<Time>,
+    camera: Single<(&mut Transform, &mut Projection), (With<Camera2d>, Without<CameraTarget>)>,
+    mut camera_target: Single<&mut Transform, (With<CameraTarget>, Without<Camera2d>)>,
+    time: Res<Time<Real>>,
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    mouse_motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
+    input: Res<ButtonInput<KeyCode>>,
 ) {
     let (mut camera_transform, mut projection) = camera.into_inner();
 
@@ -288,8 +305,8 @@ fn update_camera(
     };
 
     let direction = Vec3::new(
-        player.translation.x,
-        player.translation.y,
+        camera_target.translation.x,
+        camera_target.translation.y,
         camera_transform.translation.z,
     );
 
@@ -297,7 +314,25 @@ fn update_camera(
         .translation
         .smooth_nudge(&direction, CAMERA_DECAY_RATE, time.delta_secs());
 
+    if mouse_button.pressed(MouseButton::Left) {
+        let pan_delta = mouse_motion.delta * camera_projection.scale;
+
+        camera_transform.translation.x -= pan_delta.x;
+        camera_transform.translation.y += pan_delta.y;
+
+        camera_target.translation.x -= pan_delta.x;
+        camera_target.translation.y += pan_delta.y
+    }
+
     camera_projection.scale *= 0.9f32.powf(scroll.delta.y);
+
+    if input.just_pressed(KeyCode::Minus) {
+        camera_projection.scale /= 0.8f32;
+    }
+
+    if input.just_pressed(KeyCode::Equal) {
+        camera_projection.scale *= 0.8f32;
+    }
 }
 
 fn pause_game(mut time: ResMut<Time<Virtual>>, input: Res<ButtonInput<KeyCode>>) {
@@ -325,7 +360,7 @@ fn main() {
             (
                 pause_game,
                 update_ui,
-                (move_player, update_camera).chain(),
+                (move_camera_target, update_camera).chain(),
                 (draw_planets, update_trails, draw_trails).chain(),
             ),
         )
