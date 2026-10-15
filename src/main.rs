@@ -125,7 +125,7 @@ fn setup_planets(
     mut meshes: ResMut<Assets<Mesh>>,
     mut colors: ResMut<Assets<ColorMaterial>>,
 ) {
-    let mesh_color = colors.add(Color::from(WHITE));
+    let mesh_color = colors.add(Color::srgb(7., 7., 7.));
 
     for planet in PLANETS {
         let radius = planet.size * DIST_SCALE / AU_EARTH_RADIUS;
