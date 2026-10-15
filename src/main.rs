@@ -20,7 +20,13 @@ struct CameraTarget;
 struct Mass(f32);
 
 #[derive(Component)]
+struct Radius(f32);
+
+#[derive(Component)]
 struct PlanetUi(Entity);
+
+#[derive(Component)]
+struct PlanetLabel(Entity);
 
 #[derive(Component)]
 struct Trail {
@@ -31,15 +37,18 @@ struct Trail {
 #[derive(Resource, Deref, DerefMut)]
 struct TrailTimer(Timer);
 
+#[derive(Resource)]
+struct ShowTrails(bool);
+
 #[derive(Component)]
 struct Position(Vec2);
 
 #[derive(Component)]
 struct Velocity(Vec2);
 
-const SIZE_SCALE: f32 = 2.0;
+const AU_EARTH_RADIUS: f32 = 23454.8;
 const DIST_SCALE: f32 = 100.0;
-const TIME_SCALE: f32 = 1.0;
+const TIME_SCALE: f32 = 10.0;
 const G: f32 = 8e-7;
 const TRAIL_MAX_LENGTH: usize = 50;
 const TRAIL_INTERVAL: f32 = 0.1;
@@ -119,11 +128,14 @@ fn setup_planets(
     let mesh_color = colors.add(Color::from(WHITE));
 
     for planet in PLANETS {
+        let radius = planet.size * DIST_SCALE / AU_EARTH_RADIUS;
+
         commands.spawn((
             Planet,
             Name::from(planet.name),
             Mass(planet.mass),
-            Mesh2d(meshes.add(Circle::new((1.0 + planet.size.log10()) * SIZE_SCALE))),
+            Radius(radius),
+            Mesh2d(meshes.add(Circle::new(radius))),
             MeshMaterial2d(mesh_color.clone()),
             Position(Vec2::new(planet.initial_radius, 0.0)),
             Transform::default(),
@@ -133,7 +145,7 @@ fn setup_planets(
             )),
             Trail {
                 points: VecDeque::new(),
-                max_points: (TRAIL_MAX_LENGTH as f32 * planet.initial_radius) as usize,
+                max_points: (TRAIL_MAX_LENGTH as f32 * planet.initial_radius * TIME_SCALE) as usize,
             },
         ));
 
@@ -262,6 +274,56 @@ fn update_ui(
     }
 }
 
+fn setup_labels(mut commands: Commands, planets: Query<(Entity, &Name), With<Planet>>) {
+    for (entity, name) in &planets {
+        commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    ..default()
+                },
+                PlanetLabel(entity),
+            ))
+            .with_children(|parent| {
+                parent.spawn((
+                    Text::new(name),
+                    TextColor(Color::WHITE),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        bottom: Val::ZERO,
+                        ..default()
+                    },
+                    UiTransform::from_translation(Val2::percent(-50.0, 0.0)),
+                    TextLayout::justify(Justify::Center),
+                ));
+            });
+    }
+}
+
+fn update_labels(
+    planets: Query<(&GlobalTransform, &Radius), With<Planet>>,
+    labels: Query<(&mut Node, &PlanetLabel)>,
+    camera: Single<(&Camera, &GlobalTransform), With<Camera2d>>,
+) {
+    let (camera, camera_global_transform) = camera.into_inner();
+
+    for (mut node, planet_label) in labels {
+        let Ok((world_transform, radius)) = planets.get(planet_label.0) else {
+            continue;
+        };
+
+        let viewport_position = camera
+            .world_to_viewport(
+                camera_global_transform,
+                world_transform.translation() + Vec3::Y * radius.0,
+            )
+            .unwrap();
+
+        node.top = px(viewport_position.y - 10.0);
+        node.left = px(viewport_position.x);
+    }
+}
+
 fn move_camera_target(
     mut camera_target: Single<&mut Transform, With<CameraTarget>>,
     time: Res<Time<Real>>,
@@ -335,6 +397,12 @@ fn update_camera(
     }
 }
 
+fn toggle_trails(input: Res<ButtonInput<KeyCode>>, mut trails_shown: ResMut<ShowTrails>) {
+    if input.just_pressed(KeyCode::KeyT) {
+        trails_shown.0 = !trails_shown.0;
+    }
+}
+
 fn pause_game(mut time: ResMut<Time<Virtual>>, input: Res<ButtonInput<KeyCode>>) {
     if input.just_pressed(KeyCode::Space) {
         if time.is_paused() {
@@ -348,20 +416,36 @@ fn pause_game(mut time: ResMut<Time<Virtual>>, input: Res<ButtonInput<KeyCode>>)
 fn main() {
     App::new()
         .add_plugins(DefaultPlugins)
+        .insert_resource(ShowTrails(true))
         .insert_resource(ClearColor(Color::BLACK))
         .insert_resource(TrailTimer(Timer::from_seconds(
             TRAIL_INTERVAL,
             TimerMode::Repeating,
         )))
-        .add_systems(Startup, (setup_camera, (setup_planets, setup_ui).chain()))
+        .add_systems(
+            Startup,
+            (
+                setup_camera,
+                (setup_planets, setup_ui, setup_labels).chain(),
+            ),
+        )
         .add_systems(FixedUpdate, (update_velocity, update_position).chain())
         .add_systems(
             Update,
             (
                 pause_game,
+                toggle_trails,
                 update_ui,
+                update_labels,
                 (move_camera_target, update_camera).chain(),
-                (draw_planets, update_trails, draw_trails).chain(),
+                (
+                    draw_planets,
+                    update_trails,
+                    draw_trails
+                        .run_if(|visible: Res<ShowTrails>| visible.0)
+                        .after(toggle_trails),
+                )
+                    .chain(),
             ),
         )
         .run();
